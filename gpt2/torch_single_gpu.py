@@ -238,6 +238,9 @@ class DataLoaderLite:
             self.current_position = 0
         return x, y
 
+    def reset(self):
+        self.current_position = 0
+
 
 # -----------------------------------------------------------------------------
 
