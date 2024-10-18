@@ -100,10 +100,10 @@ class MLP(eqx.Module):
         std = 0.02
 
         self.fc1 = eqx.nn.Linear(
-            config.embed_dim, config.embed_dim * 4, key=key1, dtype=dtype
+            config.n_embd, config.n_embd * 4, key=key1, dtype=dtype
         )
         self.proj = eqx.nn.Linear(
-            config.embed_dim * 4, config.embed_dim, key=key2, dtype=dtype
+            config.n_embd * 4, config.n_embd, key=key2, dtype=dtype
         )
 
         # Set the weights and bias of the linear layer as per the paper
@@ -120,7 +120,7 @@ class MLP(eqx.Module):
                 self.proj.weight,
                 self.proj.bias,
                 key2,
-                std * (2 * config.num_layers) ** -0.5,
+                std * (2 * config.n_layer) ** -0.5,
             ),
         )
 
@@ -132,27 +132,23 @@ class MLP(eqx.Module):
 
 
 class CausalSelfAttention(eqx.Module):
-    num_heads: int
-    num_layers: int
+    n_head: int
+    n_layer: int
     wqkv: eqx.nn.Linear
     proj: eqx.nn.Linear
     scale: float
 
     def __init__(self, config, key, dtype=jnp.bfloat16):
-        assert config.embed_dim % config.num_heads == 0
+        assert config.n_embd % config.n_head == 0
         dtype = default_floating_dtype() if dtype is None else dtype
         key1, key2 = jax.random.split(key, 2)
 
-        self.num_heads = config.num_heads
-        self.num_layers = config.num_layers
-        self.scale = 1.0 / math.sqrt(config.embed_dim)
+        self.n_head = config.n_head
+        self.n_layer = config.n_layer
+        self.scale = 1.0 / math.sqrt(config.n_embd)
 
-        self.wqkv = eqx.nn.Linear(
-            config.embed_dim, 3 * config.embed_dim, key=key1, dtype=dtype
-        )
-        self.proj = eqx.nn.Linear(
-            config.embed_dim, config.embed_dim, key=key2, dtype=dtype
-        )
+        self.wqkv = eqx.nn.Linear(config.n_embd, 3 * config.n_embd, key=key1, dtype=dtype) # noqa:E501
+        self.proj = eqx.nn.Linear(config.n_embd, config.n_embd, key=key2, dtype=dtype)
 
         self.wqkv = eqx.tree_at(
             get_weight_and_bias,
@@ -171,12 +167,12 @@ class CausalSelfAttention(eqx.Module):
                 self.proj.weight,
                 self.proj.bias,
                 key2,
-                std=0.02 * (2 * config.num_layers) ** -0.5,
+                std=0.02 * (2 * config.n_layer) ** -0.5,
             ),
         )
 
     def __call__(self, x, mask=None):
-        # x is of shape [seqlen, embed_dim]
+        # x is of shape [seqlen, n_embd]
         # batch size will be handled by vmap
         T, C = x.shape
 
@@ -188,13 +184,13 @@ class CausalSelfAttention(eqx.Module):
 
         # 3. Reshape q, k,v to move the heads to the batch dimension
         # so that we can calculate the attention for all heads in one go
-        q = jnp.reshape(q, (T, self.num_heads, C // self.num_heads))
-        k = jnp.reshape(k, (T, self.num_heads, C // self.num_heads))
-        v = jnp.reshape(v, (T, self.num_heads, C // self.num_heads))
+        q = jnp.reshape(q, (T, self.n_head, C // self.n_head))
+        k = jnp.reshape(k, (T, self.n_head, C // self.n_head))
+        v = jnp.reshape(v, (T, self.n_head, C // self.n_head))
 
         # 4. Compute attention
-        attn = jax.nn.scaled_dot_product_attention(q, k, v, is_causal=True)
-        attn = jnp.reshape(attn.astype(jnp.bfloat16), (T, -1))
+        attn = jax.nn.dot_product_attention(q, k, v, is_causal=True)
+        attn = jnp.reshape(attn, (T, -1))
 
         # 5. Projection
         out = eqx.filter_vmap(self.proj)(attn)
@@ -209,9 +205,9 @@ class TransformerBlock(eqx.Module):
 
     def __init__(self, config, key, dtype=jnp.bfloat16):
         key1, key2 = jax.random.split(key, 2)
-        self.norm_1 = eqx.nn.LayerNorm(config.embed_dim)
+        self.norm_1 = eqx.nn.LayerNorm(config.n_embd)
         self.attn = CausalSelfAttention(config, key=key1, dtype=dtype)
-        self.norm_2 = eqx.nn.LayerNorm(config.embed_dim)
+        self.norm_2 = eqx.nn.LayerNorm(config.n_embd)
         self.mlp = MLP(config, key=key2, dtype=dtype)
 
     def __call__(self, x, mask=None):
@@ -225,8 +221,8 @@ class TransformerBlock(eqx.Module):
 
 class GPT(eqx.Module):
     block_size: int
-    num_layers: int
-    num_heads: int
+    n_layer: int
+    n_head: int
     vocab_size: int
     tok_embed_and_head: eqx.nn.Shared
     pos_embed: eqx.nn.Embedding
@@ -235,21 +231,21 @@ class GPT(eqx.Module):
 
     def __init__(self, config, key, dtype=jnp.bfloat16):
         self.block_size = config.block_size
-        self.num_layers = config.num_layers
-        self.num_heads = config.num_heads
+        self.n_layer = config.n_layer
+        self.n_head = config.n_head
         self.vocab_size = config.vocab_size
 
-        keys = jax.random.split(key, config.num_layers + 3)
+        keys = jax.random.split(key, config.n_layer + 3)
         key1, key2, key3, tf_keys = keys[0], keys[1], keys[2], keys[3:]
 
-        self.norm = eqx.nn.LayerNorm(config.embed_dim)
+        self.norm = eqx.nn.LayerNorm(config.n_embd)
 
         make_layers = lambda k: TransformerBlock(config, key=k, dtype=dtype)
         self.tf_blocks = eqx.filter_vmap(make_layers)(tf_keys)
         del make_layers
 
         self.pos_embed = eqx.nn.Embedding(
-            config.block_size, config.embed_dim, key=key1, dtype=dtype
+            config.block_size, config.n_embd, key=key1, dtype=dtype
         )
         self.pos_embed = eqx.tree_at(
             get_weight_and_bias,
@@ -258,7 +254,7 @@ class GPT(eqx.Module):
         )
 
         tok_embed = eqx.nn.Embedding(
-            config.vocab_size, config.embed_dim, key=key2, dtype=dtype
+            config.vocab_size, config.n_embd, key=key2, dtype=dtype
         )
         tok_embed = eqx.tree_at(
             get_weight_and_bias,
@@ -267,7 +263,7 @@ class GPT(eqx.Module):
         )
 
         lm_head = eqx.nn.Linear(
-            config.embed_dim, config.vocab_size, use_bias=False, key=key3, dtype=dtype
+            config.n_embd, config.vocab_size, use_bias=False, key=key3, dtype=dtype
         )
         dst = lambda embed_and_linear: embed_and_linear[1].weight
         src = lambda embed_and_linear: embed_and_linear[0].weight
