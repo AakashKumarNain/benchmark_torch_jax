@@ -285,8 +285,8 @@ class GPT(eqx.Module):
         pos = jnp.arange(0, seqlen, dtype=jnp.int32)
         
         # idx is of shape (seqlen,)
-        pos_embed = jax.vmap(self.pos_embed)(pos)
-        tok_embed = jax.vmap(tok_embed)(idx)
+        pos_embed = eqx.filter_vmap(self.pos_embed)(pos)
+        tok_embed = eqx.filter_vmap(tok_embed)(idx)
 
         # 2. Add position to token embeddings
         x = pos_embed + tok_embed
@@ -305,8 +305,10 @@ class GPT(eqx.Module):
         (x, layer_idx), _ = jax.lax.scan(f, (x, layer_idx), dynamic_layers)
 
         # 4. Final pre-layer norm
-        x = jax.vmap(self.norm)(x.astype(jnp.float32)).astype(jnp.bfloat16)
+        x = eqx.filter_vmap(self.norm)(x).astype(jnp.bfloat16)
 
         # 5. Classification head
-        logits = jax.vmap(lm_head)(x)
+        logits = eqx.filter_vmap(lm_head)(x)
         return logits
+
+###############################################################
