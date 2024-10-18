@@ -147,7 +147,9 @@ class CausalSelfAttention(eqx.Module):
         self.n_layer = config.n_layer
         self.scale = 1.0 / math.sqrt(config.n_embd)
 
-        self.wqkv = eqx.nn.Linear(config.n_embd, 3 * config.n_embd, key=key1, dtype=dtype) # noqa:E501
+        self.wqkv = eqx.nn.Linear(
+            config.n_embd, 3 * config.n_embd, key=key1, dtype=dtype
+        )
         self.proj = eqx.nn.Linear(config.n_embd, config.n_embd, key=key2, dtype=dtype)
 
         self.wqkv = eqx.tree_at(
@@ -211,10 +213,9 @@ class TransformerBlock(eqx.Module):
         self.mlp = MLP(config, key=key2, dtype=dtype)
 
     def __call__(self, x, mask=None):
-        x_dtype = x.dtype
-        x = eqx.filter_vmap(self.norm_1).astype(x_dtype)
+        x = eqx.filter_vmap(self.norm_1)
         x = x + self.attn(x, mask=mask)
-        x = eqx.filter_vmap(self.norm_2)(x).astype(x_dtype)
+        x = eqx.filter_vmap(self.norm_2)(x)
         x = x + self.mlp(x)
         return x
 
