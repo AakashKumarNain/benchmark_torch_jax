@@ -85,39 +85,6 @@ def set_weight_and_bias(weight, bias, key, mean=0.0, std=0.02):
 ###############################################################
 
 
-class DataLoaderLite:
-    def __init__(self, B, T):
-        self.B = B
-        self.T = T
-
-        # at init load tokens from disk and store them in memory
-        with open("input.txt", "r") as f:
-            text = f.read()
-        enc = tiktoken.get_encoding("gpt2")
-        tokens = jnp.array(enc.encode(text))
-        self.tokens = torch.tensor(tokens)
-        print(f"loaded {len(self.tokens)} tokens")
-        print(f"1 epoch = {len(self.tokens) // (B * T)} batches")
-        self.current_position = 0
-
-    def next_batch(self):
-        B, T = self.B, self.T
-        batch_tokens = self.tokens[self.current_position : self.current_position + B * T + 1]
-        x = jnp.reshape(batch_tokens[:-1], (B, T))
-        y = jnp.reshape(batch_tokens[1:], (B, T))
-        self.current_position +=  B * T
-
-        # Check if we already processed the last batch
-        if self.current_position + (B * T + 1) > len(self.tokens):
-            self.current_position = 0
-        return x, y
-
-    def reset(self):
-        self.current_position = 0
-
-###############################################################
-
-
 class MLP(eqx.Module):
     fc1: eqx.nn.Linear
     proj: eqx.nn.Linear
@@ -310,5 +277,47 @@ class GPT(eqx.Module):
         # 5. Classification head
         logits = eqx.filter_vmap(lm_head)(x)
         return logits
+
+###############################################################
+
+
+@dataclass
+class GPTConfig:
+    block_size: int = 1024  # max sequence length
+    vocab_size: int = 50257  # number of tokens: 50,000 BPE merges + 256 bytes tokens + 1 <|endoftext|> token
+    n_layer: int = 12  # number of layers
+    n_head: int = 12  # number of heads
+    n_embd: int = 768  # embedding dimension
+
+
+class DataLoaderLite:
+    def __init__(self, B, T):
+        self.B = B
+        self.T = T
+
+        # at init load tokens from disk and store them in memory
+        with open("input.txt", "r") as f:
+            text = f.read()
+        enc = tiktoken.get_encoding("gpt2")
+        tokens = jnp.array(enc.encode(text))
+        self.tokens = torch.tensor(tokens)
+        print(f"loaded {len(self.tokens)} tokens")
+        print(f"1 epoch = {len(self.tokens) // (B * T)} batches")
+        self.current_position = 0
+
+    def next_batch(self):
+        B, T = self.B, self.T
+        batch_tokens = self.tokens[self.current_position : self.current_position + B * T + 1]
+        x = jnp.reshape(batch_tokens[:-1], (B, T))
+        y = jnp.reshape(batch_tokens[1:], (B, T))
+        self.current_position +=  B * T
+
+        # Check if we already processed the last batch
+        if self.current_position + (B * T + 1) > len(self.tokens):
+            self.current_position = 0
+        return x, y
+
+    def reset(self):
+        self.current_position = 0
 
 ###############################################################
