@@ -1,3 +1,7 @@
+import math
+import inspect
+from dataclasses import dataclass
+
 import tiktoken
 
 import jax
@@ -11,6 +15,7 @@ from equinox._misc import default_floating_dtype
 
 ######################## Equinox model utils ################################
 
+
 def is_layer(x):
     """Check if the current pytree is an instance of any Equinox layer."""
     return isinstance(x, (eqx.nn.Linear, eqx.nn.Embedding, eqx.nn.LayerNorm))
@@ -23,10 +28,10 @@ def is_leaf(x):
 
 def set_mask(x):
     """Sets the mask for certain parameters.
-    
+
     There are scenarios where you want to filter out the parameters of the
     model for applying some specialized op. For example, in this case we
-    are filtering our pytree and masking certain parameters to avoid applying 
+    are filtering our pytree and masking certain parameters to avoid applying
     `weight_decay` to these parameters. These parameters are:
 
     1. Linear layer -> Weight decay is only applied to the weights and not the bias
@@ -43,7 +48,6 @@ def set_mask(x):
         return jtu.tree_map(lambda _: True, x)
     else:
         return jtu.tree_map(lambda _: False, x)
-
 
 
 def count_params(model):
@@ -82,26 +86,31 @@ def set_weight_and_bias(weight, bias, key, mean=0.0, std=0.02):
         return weight, bias
     return weight
 
+
 ###############################################################
 
 
 class MLP(eqx.Module):
     fc1: eqx.nn.Linear
     proj: eqx.nn.Linear
-    
+
     def __init__(self, config, key, dtype=jnp.bfloat16):
         dtype = default_floating_dtype() if dtype is None else dtype
         key1, key2 = jax.random.split(key, 2)
         std = 0.02
-        
-        self.fc1 = eqx.nn.Linear(config.embed_dim, config.embed_dim * 4, key=key1, dtype=dtype) # ruff: ignore
-        self.proj = eqx.nn.Linear(config.embed_dim * 4, config.embed_dim, key=key2, dtype=dtype) # ruff: ignore
+
+        self.fc1 = eqx.nn.Linear(
+            config.embed_dim, config.embed_dim * 4, key=key1, dtype=dtype
+        )
+        self.proj = eqx.nn.Linear(
+            config.embed_dim * 4, config.embed_dim, key=key2, dtype=dtype
+        )
 
         # Set the weights and bias of the linear layer as per the paper
         self.fc1 = eqx.tree_at(
             get_weight_and_bias,
             self.fc1,
-            set_weight_and_bias(self.fc1.weight, self.fc1.bias, key1, std=std)
+            set_weight_and_bias(self.fc1.weight, self.fc1.bias, key1, std=std),
         )
         # Set the weights and bias of the projection layer as per the paper
         self.proj = eqx.tree_at(
@@ -112,7 +121,7 @@ class MLP(eqx.Module):
                 self.proj.bias,
                 key2,
                 std * (2 * config.num_layers) ** -0.5,
-            )
+            ),
         )
 
     def __call__(self, x):
@@ -128,23 +137,32 @@ class CausalSelfAttention(eqx.Module):
     wqkv: eqx.nn.Linear
     proj: eqx.nn.Linear
     scale: float
-    
+
     def __init__(self, config, key, dtype=jnp.bfloat16):
-        assert config.embed_dim  % config.num_heads == 0
+        assert config.embed_dim % config.num_heads == 0
         dtype = default_floating_dtype() if dtype is None else dtype
         key1, key2 = jax.random.split(key, 2)
 
         self.num_heads = config.num_heads
         self.num_layers = config.num_layers
-        self.scale = 1./ math.sqrt(config.embed_dim)
-        
-        self.wqkv = eqx.nn.Linear(config.embed_dim, 3 * config.embed_dim, key=key1, dtype=dtype) # ruff: ignore
-        self.proj = eqx.nn.Linear(config.embed_dim, config.embed_dim, key=key2, dtype=dtype) # ruff: ignore
+        self.scale = 1.0 / math.sqrt(config.embed_dim)
+
+        self.wqkv = eqx.nn.Linear(
+            config.embed_dim, 3 * config.embed_dim, key=key1, dtype=dtype
+        )
+        self.proj = eqx.nn.Linear(
+            config.embed_dim, config.embed_dim, key=key2, dtype=dtype
+        )
 
         self.wqkv = eqx.tree_at(
             get_weight_and_bias,
             self.wqkv,
-            set_weight_and_bias(self.wqkv.weight, self.wqkv.bias, key1, std=0.02,)
+            set_weight_and_bias(
+                self.wqkv.weight,
+                self.wqkv.bias,
+                key1,
+                std=0.02,
+            ),
         )
         self.proj = eqx.tree_at(
             get_weight_and_bias,
@@ -153,8 +171,8 @@ class CausalSelfAttention(eqx.Module):
                 self.proj.weight,
                 self.proj.bias,
                 key2,
-                std = 0.02 * (2 * config.num_layers) ** -0.5,
-            )
+                std=0.02 * (2 * config.num_layers) ** -0.5,
+            ),
         )
 
     def __call__(self, x, mask=None):
@@ -164,7 +182,7 @@ class CausalSelfAttention(eqx.Module):
 
         # 1. Calculate qkv
         qkv = eqx.filter_vmap(self.wqkv)(x)
-        
+
         # 2. Split qkv into three vectors of equal depth
         q, k, v = jnp.split(qkv, 3, axis=1)
 
@@ -205,7 +223,6 @@ class TransformerBlock(eqx.Module):
         return x
 
 
-
 class GPT(eqx.Module):
     block_size: int
     num_layers: int
@@ -230,18 +247,28 @@ class GPT(eqx.Module):
         make_layers = lambda k: TransformerBlock(config, key=k, dtype=dtype)
         self.tf_blocks = eqx.filter_vmap(make_layers)(tf_keys)
         del make_layers
-        
-        self.pos_embed = eqx.nn.Embedding(config.block_size, config.embed_dim, key=key1, dtype=dtype)
-        self.pos_embed = eqx.tree_at(get_weight_and_bias,
-            self.pos_embed, set_weight_and_bias(self.pos_embed.weight, None, key1)
+
+        self.pos_embed = eqx.nn.Embedding(
+            config.block_size, config.embed_dim, key=key1, dtype=dtype
+        )
+        self.pos_embed = eqx.tree_at(
+            get_weight_and_bias,
+            self.pos_embed,
+            set_weight_and_bias(self.pos_embed.weight, None, key1),
         )
 
-        tok_embed = eqx.nn.Embedding(config.vocab_size, config.embed_dim, key=key2, dtype=dtype)
-        tok_embed = eqx.tree_at(get_weight_and_bias,
-            tok_embed, set_weight_and_bias(tok_embed.weight, None, key2)
+        tok_embed = eqx.nn.Embedding(
+            config.vocab_size, config.embed_dim, key=key2, dtype=dtype
+        )
+        tok_embed = eqx.tree_at(
+            get_weight_and_bias,
+            tok_embed,
+            set_weight_and_bias(tok_embed.weight, None, key2),
         )
 
-        lm_head = eqx.nn.Linear(config.embed_dim, config.vocab_size, use_bias=False, key=key3, dtype=dtype)
+        lm_head = eqx.nn.Linear(
+            config.embed_dim, config.vocab_size, use_bias=False, key=key3, dtype=dtype
+        )
         dst = lambda embed_and_linear: embed_and_linear[1].weight
         src = lambda embed_and_linear: embed_and_linear[0].weight
         self.tok_embed_and_head = eqx.nn.Shared((tok_embed, lm_head), dst, src)
@@ -250,7 +277,7 @@ class GPT(eqx.Module):
         tok_embed, lm_head = self.tok_embed_and_head()
         seqlen = idx.shape[-1]
         pos = jnp.arange(0, seqlen, dtype=jnp.int32)
-        
+
         # idx is of shape (seqlen,)
         pos_embed = eqx.filter_vmap(self.pos_embed)(pos)
         tok_embed = eqx.filter_vmap(tok_embed)(idx)
@@ -278,6 +305,7 @@ class GPT(eqx.Module):
         logits = eqx.filter_vmap(lm_head)(x)
         return logits
 
+
 ###############################################################
 
 
@@ -299,18 +327,20 @@ class DataLoaderLite:
         with open("input.txt", "r") as f:
             text = f.read()
         enc = tiktoken.get_encoding("gpt2")
-        tokens = jnp.array(enc.encode(text))
-        self.tokens = torch.tensor(tokens)
+        tokens = enc.encode(text)
+        self.tokens = jnp.array(tokens)
         print(f"loaded {len(self.tokens)} tokens")
         print(f"1 epoch = {len(self.tokens) // (B * T)} batches")
         self.current_position = 0
 
     def next_batch(self):
         B, T = self.B, self.T
-        batch_tokens = self.tokens[self.current_position : self.current_position + B * T + 1]
+        batch_tokens = self.tokens[
+            self.current_position : self.current_position + B * T + 1
+        ]
         x = jnp.reshape(batch_tokens[:-1], (B, T))
         y = jnp.reshape(batch_tokens[1:], (B, T))
-        self.current_position +=  B * T
+        self.current_position += B * T
 
         # Check if we already processed the last batch
         if self.current_position + (B * T + 1) > len(self.tokens):
@@ -319,5 +349,6 @@ class DataLoaderLite:
 
     def reset(self):
         self.current_position = 0
+
 
 ###############################################################
