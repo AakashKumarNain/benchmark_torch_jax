@@ -350,6 +350,7 @@ class GPTConfig:
 
 ###############################################################
 
+
 @eqx.filter_value_and_grad
 def compute_loss(model, inputs, labels):
     """Computes cross entropy loss for a batch of preds and targets."""
@@ -361,9 +362,11 @@ def compute_loss(model, inputs, labels):
 @eqx.filter_jit(donate="all")
 def train_step(model, optim, optim_state, data, targets):
     loss, grads = compute_loss(model, data, targets)
-    updates, opt_state = optim.update(grads, optim_state, eqx.filter(model, eqx.is_array))
+    updates, opt_state = optim.update(
+        grads, optim_state, eqx.filter(model, eqx.is_array)
+    )
     model = eqx.apply_updates(model, updates)
-    return loss, model
+    return loss, model, optim_state
 
 
 total_batch_size = 524288  # 2**19, ~0.5M, in number of tokens
@@ -400,7 +403,7 @@ grad_clip_norm = 1.0
 
 # Learning rate schedule with cosine decay
 schedule = optax.warmup_cosine_decay_schedule(
-    min_lr, max_lr, warmup_steps=warmup_steps,decay_steps=(max_steps - warmup_steps)
+    min_lr, max_lr, warmup_steps=warmup_steps, decay_steps=(max_steps - warmup_steps)
 )
 
 # Get the data loader
@@ -415,7 +418,7 @@ param_mask = jtu.tree_map(set_mask, eqx.filter(model, eqx.is_array), is_leaf=is_
 
 optim = optax.chain(
     optax.adamw(schedule, mask=param_mask, b1=b1, b2=b2, weight_decay=weight_decay),
-    optax.clip_by_global_norm(grad_clip_norm)
+    optax.clip_by_global_norm(grad_clip_norm),
 )
 optim = optax.MultiSteps(optim, every_k_schedule=grad_accum_steps)
 opt_state = optim.init(eqx.filter(model, eqx.is_array))
