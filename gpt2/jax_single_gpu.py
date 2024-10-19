@@ -1,4 +1,5 @@
 import math
+import time
 import inspect
 from dataclasses import dataclass
 
@@ -421,4 +422,25 @@ optim = optax.chain(
     optax.clip_by_global_norm(grad_clip_norm),
 )
 optim = optax.MultiSteps(optim, every_k_schedule=grad_accum_steps)
-opt_state = optim.init(eqx.filter(model, eqx.is_array))
+optim_state = optim.init(eqx.filter(model, eqx.is_array))
+
+
+print("Training...\n")
+for step in range(max_steps):
+    t0 = time.time()
+    for _ in range(grad_accum_steps):
+        batch_inputs, batch_targets = train_loader.next_batch()
+        loss, model, optim_state = train_step(
+            model,
+            optim,
+            optim_state,
+            batch_inputs,
+            batch_targets,
+    )
+    t1 = time.time()
+    dt = t1 - t0  # time difference in seconds
+    tokens_processed = train_loader.B * train_loader.T * grad_accum_steps
+    tokens_per_sec = tokens_processed / dt
+    print(
+        f"step {step:4d} | loss: {loss.item():.6f} | dt: {dt*1000:.2f}ms | tok/sec: {tokens_per_sec:.2f}"
+    )
