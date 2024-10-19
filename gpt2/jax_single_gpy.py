@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import tiktoken
 
 import jax
-import math
+import optax
 import jax.numpy as jnp
 from jax import tree_util as jtu
 
@@ -306,15 +306,6 @@ class GPT(eqx.Module):
 ###############################################################
 
 
-@dataclass
-class GPTConfig:
-    block_size: int = 1024  # max sequence length
-    vocab_size: int = 50257  # number of tokens: 50,000 BPE merges + 256 bytes tokens + 1 <|endoftext|> token
-    n_layer: int = 12  # number of layers
-    n_head: int = 12  # number of heads
-    n_embd: int = 768  # embedding dimension
-
-
 class DataLoaderLite:
     def __init__(self, B, T):
         self.B = B
@@ -348,4 +339,83 @@ class DataLoaderLite:
         self.current_position = 0
 
 
+@dataclass
+class GPTConfig:
+    block_size: int = 1024  # max sequence length
+    vocab_size: int = 50257  # number of tokens: 50,000 BPE merges + 256 bytes tokens + 1 <|endoftext|> token
+    n_layer: int = 12  # number of layers
+    n_head: int = 12  # number of heads
+    n_embd: int = 768  # embedding dimension
+
+
 ###############################################################
+
+@eqx.filter_value_and_grad
+def compute_loss(model, inputs, labels):
+    """Computes cross entropy loss for a batch of preds and targets."""
+    logits = eqx.filter_vmap(model)(inputs).astype(jnp.float32)
+    loss = optax.softmax_cross_entropy_with_integer_labels(logits, labels)
+    return jnp.mean(loss)
+
+
+@eqx.filter_jit(donate="all")
+def train_step(model, optim, optim_state, data, targets):
+    loss, grads = compute_loss(model, data, targets)
+    updates, opt_state = optim.update(grads, optim_state, eqx.filter(model, eqx.is_array))
+    model = eqx.apply_updates(model, updates)
+    return loss, model
+
+
+total_batch_size = 524288  # 2**19, ~0.5M, in number of tokens
+B = 16  # micro batch size
+T = 1024  # sequence length
+assert (
+    total_batch_size % (B * T) == 0
+), "make sure total_batch_size is divisible by B * T"
+
+grad_accum_steps = total_batch_size // (B * T)
+print(f"total desired batch size: {total_batch_size}")
+print(f"=> calculated gradient accumulation steps: {grad_accum_steps}")
+
+# Get the data loader
+train_loader = DataLoaderLite(B=B, T=T)
+
+# Build the model
+config = GPTConfig(vocab_size=50304)
+model = GPT(config, key=jax.random.PRNGKey(1))
+num_devices = jax.device_count("gpu")
+grad_accum_steps = total_batch_size // (B * T * num_devices)
+
+
+# scheduler
+max_lr = 6e-4
+min_lr = max_lr * 0.1
+warmup_steps = 10
+max_steps = 50
+
+b1 = 0.9
+b2 = 0.95
+weight_decay = 0.1
+grad_clip_norm = 1.0
+
+# Learning rate schedule with cosine decay
+schedule = optax.warmup_cosine_decay_schedule(
+    min_lr, max_lr, warmup_steps=warmup_steps,decay_steps=(max_steps - warmup_steps)
+)
+
+# Get the data loader
+train_loader = DataLoaderLite(B=B, T=T)
+
+print("\nLoading GPT2 model...")
+model = GPT(config, key=jax.random.PRNGKey(1))
+print(f"Number of parameters in the model       : {(count_params(model)/1e6):.2f} M")
+
+# Apply mask to decay selected parameters only
+param_mask = jtu.tree_map(set_mask, eqx.filter(model, eqx.is_array), is_leaf=is_layer)
+
+optim = optax.chain(
+    optax.adamw(schedule, mask=param_mask, b1=b1, b2=b2, weight_decay=weight_decay),
+    optax.clip_by_global_norm(grad_clip_norm)
+)
+optim = optax.MultiSteps(optim, every_k_schedule=grad_accum_steps)
+opt_state = optim.init(eqx.filter(model, eqx.is_array))
