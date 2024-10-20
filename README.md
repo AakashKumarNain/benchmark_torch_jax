@@ -15,3 +15,8 @@ particular codebase
 3. `pip3 install -r requirements.txt`
 4. `cd gpt2/`
 5. `python jax_single_gpu.py input.txt` and `python torch_single_gpu.py input.txt`
+
+
+# References
+
+1. [nanoGPT](https://github.com/karpathy/build-nanogpt/tree/master) by Karpathy
