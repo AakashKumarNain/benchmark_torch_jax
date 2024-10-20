@@ -314,7 +314,7 @@ class DataLoaderLite:
         self.data_file_path = data_file_path
 
         # at init load tokens from disk and store them in memory
-        with open(file_path, "r") as f:
+        with open(data_file_path, "r") as f:
             text = f.read()
         enc = tiktoken.get_encoding("gpt2")
         tokens = enc.encode(text)
@@ -373,7 +373,7 @@ def train_step(model, optim, optim_state, data, targets):
 
 def main(data_file_path):
     total_batch_size = 524288  # 2**19, ~0.5M, in number of tokens
-    B = 16  # micro batch size
+    B = 8  # micro batch size
     T = 1024  # sequence length
     assert (
         total_batch_size % (B * T) == 0
@@ -440,8 +440,6 @@ def main(data_file_path):
                 batch_inputs,
                 batch_targets,
             )
-            if micro_step % 20 == 0:
-                print(f"batchloss: {loss:.5f}")
 
         t1 = time.time()
         dt = t1 - t0  # time difference in seconds
@@ -454,6 +452,6 @@ def main(data_file_path):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("data_file_path", type=str, required=True)
+    parser.add_argument("data_file_path", type=str)
     args = parser.parse_args()
     main(args.data_file_path)
