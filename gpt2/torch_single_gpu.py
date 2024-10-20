@@ -247,7 +247,7 @@ class DataLoaderLite:
 # -----------------------------------------------------------------------------
 
 
-def main():
+def main(data_file_path):
     total_batch_size = 524288  # 2**19, ~0.5M, in number of tokens
     B = 16  # micro batch size
     T = 1024  # sequence length
@@ -260,7 +260,7 @@ def main():
     print(f"=> calculated gradient accumulation steps: {grad_accum_steps}")
 
     # Get the data loader
-    train_loader = DataLoaderLite(B=B, T=T)
+    train_loader = DataLoaderLite(B=B, T=T, data_file_path=data_file_path)
 
     # Build the model
     model = GPT(GPTConfig(vocab_size=50304))
@@ -334,6 +334,6 @@ def main():
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("data_file_path", type=str, required=True)
+    parser.add_argument("data_file_path", type=str)
     args = parser.parse_args()
     main(args.data_file_path)
