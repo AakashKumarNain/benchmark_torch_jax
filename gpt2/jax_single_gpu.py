@@ -311,7 +311,7 @@ class DataLoaderLite:
     def __init__(self, B, T, file_path):
         self.B = B
         self.T = T
-        self.file_path=file_path
+        self.file_path = file_path
 
         # at init load tokens from disk and store them in memory
         with open(file_path, "r") as f:
@@ -383,7 +383,7 @@ print(f"total desired batch size: {total_batch_size}")
 print(f"=> calculated gradient accumulation steps: {grad_accum_steps}")
 
 # Get the data loader
-train_loader = DataLoaderLite(B=B, T=T, file_path="gpt2/input.txt")
+train_loader = DataLoaderLite(B=B, T=T, file_path="input.txt")
 
 # Build the model
 config = GPTConfig(vocab_size=50304)
