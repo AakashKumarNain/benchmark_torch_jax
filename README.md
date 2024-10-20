@@ -17,6 +17,11 @@ particular codebase
 5. `python jax_single_gpu.py input.txt` and `python torch_single_gpu.py input.txt`
 
 
+# Results
+
+Please check the [results.md](./results.md) file for the initial results. We will store the logs properly once some initial benchmarks results are complete. 
+ 
+
 # References
 
 1. [nanoGPT](https://github.com/karpathy/build-nanogpt/tree/master) by Karpathy
