@@ -8,13 +8,10 @@ framework. Once the benchmark is done, we can refactor and format the code to ma
 particular codebase
 
 
-# Results
+# How to run the benchmarks?
 
-#### GPT-2
-Initial results with JAX and Equinox on A100
-
-![jax_initial_results](./logs/jax_run.png)
-
-Initial results with torch on A100
-
-![torch_initial_results](./logs/torch_run.png)
+1. `git clone https://github.com/AakashKumarNain/benchmark_torch_jax.git`
+2. `cd benchmark_torch_jax/`
+3. `pip3 install -r requirements.txt`
+4. `cd gpt2/`
+5. `python jax_single_gpu.py input.txt` and `python torch_single_gpu.py input.txt`
