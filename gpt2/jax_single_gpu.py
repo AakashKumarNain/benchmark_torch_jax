@@ -392,7 +392,6 @@ def main(data_file_path):
     num_devices = jax.device_count("gpu")
     grad_accum_steps = total_batch_size // (B * T * num_devices)
 
-
     # scheduler
     max_lr = 6e-4
     min_lr = max_lr * 0.1
@@ -406,22 +405,28 @@ def main(data_file_path):
 
     print("\nLoading GPT2 model...")
     model = GPT(config, key=jax.random.PRNGKey(1))
-    print(f"Number of parameters in the model       : {(count_params(model)/1e6):.2f} M")
+    print(
+        f"Number of parameters in the model       : {(count_params(model)/1e6):.2f} M"
+    )
 
     # Learning rate schedule with cosine decay
     schedule = optax.warmup_cosine_decay_schedule(
-        min_lr, max_lr, warmup_steps=warmup_steps, decay_steps=(max_steps - warmup_steps)
+        min_lr,
+        max_lr,
+        warmup_steps=warmup_steps,
+        decay_steps=(max_steps - warmup_steps),
     )
 
     # Apply mask to decay selected parameters only
-    param_mask = jtu.tree_map(set_mask, eqx.filter(model, eqx.is_array), is_leaf=is_layer)
+    param_mask = jtu.tree_map(
+        set_mask, eqx.filter(model, eqx.is_array), is_leaf=is_layer
+    )
     optim = optax.chain(
         optax.adamw(schedule, mask=param_mask, b1=b1, b2=b2, weight_decay=weight_decay),
         optax.clip_by_global_norm(grad_clip_norm),
     )
     optim = optax.MultiSteps(optim, every_k_schedule=grad_accum_steps)
     optim_state = optim.init(eqx.filter(model, eqx.is_array))
-
 
     print("Training...\n")
     for step in range(max_steps):
