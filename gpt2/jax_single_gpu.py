@@ -214,7 +214,7 @@ class TransformerBlock(eqx.Module):
         self.mlp = MLP(config, key=key2, dtype=dtype)
 
     def __call__(self, x, mask=None):
-        x = eqx.filter_vmap(self.norm_1)
+        x = eqx.filter_vmap(self.norm_1)(x)
         x = x + self.attn(x, mask=mask)
         x = eqx.filter_vmap(self.norm_2)(x)
         x = x + self.mlp(x)
@@ -308,12 +308,13 @@ class GPT(eqx.Module):
 
 
 class DataLoaderLite:
-    def __init__(self, B, T):
+    def __init__(self, B, T, file_path):
         self.B = B
         self.T = T
+        self.file_path=file_path
 
         # at init load tokens from disk and store them in memory
-        with open("input.txt", "r") as f:
+        with open(file_path, "r") as f:
             text = f.read()
         enc = tiktoken.get_encoding("gpt2")
         tokens = enc.encode(text)
@@ -382,7 +383,7 @@ print(f"total desired batch size: {total_batch_size}")
 print(f"=> calculated gradient accumulation steps: {grad_accum_steps}")
 
 # Get the data loader
-train_loader = DataLoaderLite(B=B, T=T)
+train_loader = DataLoaderLite(B=B, T=T, file_path="gpt2/input.txt")
 
 # Build the model
 config = GPTConfig(vocab_size=50304)
@@ -402,21 +403,17 @@ b2 = 0.95
 weight_decay = 0.1
 grad_clip_norm = 1.0
 
+print("\nLoading GPT2 model...")
+model = GPT(config, key=jax.random.PRNGKey(1))
+print(f"Number of parameters in the model       : {(count_params(model)/1e6):.2f} M")
+
 # Learning rate schedule with cosine decay
 schedule = optax.warmup_cosine_decay_schedule(
     min_lr, max_lr, warmup_steps=warmup_steps, decay_steps=(max_steps - warmup_steps)
 )
 
-# Get the data loader
-train_loader = DataLoaderLite(B=B, T=T)
-
-print("\nLoading GPT2 model...")
-model = GPT(config, key=jax.random.PRNGKey(1))
-print(f"Number of parameters in the model       : {(count_params(model)/1e6):.2f} M")
-
 # Apply mask to decay selected parameters only
 param_mask = jtu.tree_map(set_mask, eqx.filter(model, eqx.is_array), is_leaf=is_layer)
-
 optim = optax.chain(
     optax.adamw(schedule, mask=param_mask, b1=b1, b2=b2, weight_decay=weight_decay),
     optax.clip_by_global_norm(grad_clip_norm),
@@ -428,7 +425,7 @@ optim_state = optim.init(eqx.filter(model, eqx.is_array))
 print("Training...\n")
 for step in range(max_steps):
     t0 = time.time()
-    for _ in range(grad_accum_steps):
+    for micro_step in range(grad_accum_steps):
         batch_inputs, batch_targets = train_loader.next_batch()
         loss, model, optim_state = train_step(
             model,
@@ -437,10 +434,13 @@ for step in range(max_steps):
             batch_inputs,
             batch_targets,
         )
+        if micro_step % 20 == 0:
+            print(f"batchloss: {loss:.5f}")
+
     t1 = time.time()
     dt = t1 - t0  # time difference in seconds
     tokens_processed = train_loader.B * train_loader.T * grad_accum_steps
     tokens_per_sec = tokens_processed / dt
     print(
-        f"step {step:4d} | loss: {loss.item():.6f} | dt: {dt*1000:.2f}ms | tok/sec: {tokens_per_sec:.2f}"
+        f"step {step:4d} | loss: {loss:.6f} | dt: {dt*1000:.2f}ms | tok/sec: {tokens_per_sec:.2f}"
     )
