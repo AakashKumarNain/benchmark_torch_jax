@@ -1,9 +1,10 @@
 absl-py==2.1.0
 chex==0.1.87
 equinox
+"jax[cuda12]"
 jaxlib==0.4.34
 jaxtyping==0.2.34
 numpy==1.26.4
 optax @ git+https://github.com/google-deepmind/optax.git@85378ad4ce1c19dfd218c65873f8941776c3eaca
 ruff==0.6.9
-torch==2.2.2
+torch==2.4 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
