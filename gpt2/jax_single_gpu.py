@@ -364,7 +364,7 @@ def compute_loss(model, inputs, labels):
 @eqx.filter_jit(donate="all")
 def train_step(model, optim, optim_state, data, targets):
     loss, grads = compute_loss(model, data, targets)
-    updates, opt_state = optim.update(
+    updates, optim_state = optim.update(
         grads, optim_state, eqx.filter(model, eqx.is_array)
     )
     model = eqx.apply_updates(model, updates)
