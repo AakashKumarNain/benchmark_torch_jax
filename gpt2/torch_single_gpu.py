@@ -246,6 +246,7 @@ class DataLoaderLite:
 
 # -----------------------------------------------------------------------------
 
+
 def main():
     total_batch_size = 524288  # 2**19, ~0.5M, in number of tokens
     B = 16  # micro batch size
@@ -294,7 +295,6 @@ def main():
     warmup_steps = 10
     max_steps = 50
 
-
     # Training
     for step in range(max_steps):
         t0 = time.time()
@@ -330,7 +330,6 @@ def main():
         print(
             f"step {step:4d} | loss: {loss_accum.item():.6f} | lr {lr:.4e} | norm: {norm:.4f} | dt: {dt*1000:.2f}ms | tok/sec: {tokens_per_sec:.2f}"
         )
-
 
 
 if __name__ == "__main__":
