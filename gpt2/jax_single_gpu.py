@@ -1,6 +1,6 @@
 import math
 import time
-import inspect
+import argparse
 from dataclasses import dataclass
 
 import tiktoken
@@ -308,10 +308,10 @@ class GPT(eqx.Module):
 
 
 class DataLoaderLite:
-    def __init__(self, B, T, file_path):
+    def __init__(self, B, T, data_file_path):
         self.B = B
         self.T = T
-        self.file_path = file_path
+        self.data_file_path = data_file_path
 
         # at init load tokens from disk and store them in memory
         with open(file_path, "r") as f:
@@ -371,76 +371,84 @@ def train_step(model, optim, optim_state, data, targets):
     return loss, model, optim_state
 
 
-total_batch_size = 524288  # 2**19, ~0.5M, in number of tokens
-B = 16  # micro batch size
-T = 1024  # sequence length
-assert (
-    total_batch_size % (B * T) == 0
-), "make sure total_batch_size is divisible by B * T"
+def main(data_file_path):
+    total_batch_size = 524288  # 2**19, ~0.5M, in number of tokens
+    B = 16  # micro batch size
+    T = 1024  # sequence length
+    assert (
+        total_batch_size % (B * T) == 0
+    ), "make sure total_batch_size is divisible by B * T"
 
-grad_accum_steps = total_batch_size // (B * T)
-print(f"total desired batch size: {total_batch_size}")
-print(f"=> calculated gradient accumulation steps: {grad_accum_steps}")
+    grad_accum_steps = total_batch_size // (B * T)
+    print(f"total desired batch size: {total_batch_size}")
+    print(f"=> calculated gradient accumulation steps: {grad_accum_steps}")
 
-# Get the data loader
-train_loader = DataLoaderLite(B=B, T=T, file_path="input.txt")
+    # Get the data loader
+    train_loader = DataLoaderLite(B=B, T=T, data_file_path=data_file_path)
 
-# Build the model
-config = GPTConfig(vocab_size=50304)
-model = GPT(config, key=jax.random.PRNGKey(1))
-num_devices = jax.device_count("gpu")
-grad_accum_steps = total_batch_size // (B * T * num_devices)
-
-
-# scheduler
-max_lr = 6e-4
-min_lr = max_lr * 0.1
-warmup_steps = 10
-max_steps = 50
-
-b1 = 0.9
-b2 = 0.95
-weight_decay = 0.1
-grad_clip_norm = 1.0
-
-print("\nLoading GPT2 model...")
-model = GPT(config, key=jax.random.PRNGKey(1))
-print(f"Number of parameters in the model       : {(count_params(model)/1e6):.2f} M")
-
-# Learning rate schedule with cosine decay
-schedule = optax.warmup_cosine_decay_schedule(
-    min_lr, max_lr, warmup_steps=warmup_steps, decay_steps=(max_steps - warmup_steps)
-)
-
-# Apply mask to decay selected parameters only
-param_mask = jtu.tree_map(set_mask, eqx.filter(model, eqx.is_array), is_leaf=is_layer)
-optim = optax.chain(
-    optax.adamw(schedule, mask=param_mask, b1=b1, b2=b2, weight_decay=weight_decay),
-    optax.clip_by_global_norm(grad_clip_norm),
-)
-optim = optax.MultiSteps(optim, every_k_schedule=grad_accum_steps)
-optim_state = optim.init(eqx.filter(model, eqx.is_array))
+    # Build the model
+    config = GPTConfig(vocab_size=50304)
+    model = GPT(config, key=jax.random.PRNGKey(1))
+    num_devices = jax.device_count("gpu")
+    grad_accum_steps = total_batch_size // (B * T * num_devices)
 
 
-print("Training...\n")
-for step in range(max_steps):
-    t0 = time.time()
-    for micro_step in range(grad_accum_steps):
-        batch_inputs, batch_targets = train_loader.next_batch()
-        loss, model, optim_state = train_step(
-            model,
-            optim,
-            optim_state,
-            batch_inputs,
-            batch_targets,
-        )
-        if micro_step % 20 == 0:
-            print(f"batchloss: {loss:.5f}")
+    # scheduler
+    max_lr = 6e-4
+    min_lr = max_lr * 0.1
+    warmup_steps = 10
+    max_steps = 50
 
-    t1 = time.time()
-    dt = t1 - t0  # time difference in seconds
-    tokens_processed = train_loader.B * train_loader.T * grad_accum_steps
-    tokens_per_sec = tokens_processed / dt
-    print(
-        f"step {step:4d} | loss: {loss:.6f} | dt: {dt*1000:.2f}ms | tok/sec: {tokens_per_sec:.2f}"
+    b1 = 0.9
+    b2 = 0.95
+    weight_decay = 0.1
+    grad_clip_norm = 1.0
+
+    print("\nLoading GPT2 model...")
+    model = GPT(config, key=jax.random.PRNGKey(1))
+    print(f"Number of parameters in the model       : {(count_params(model)/1e6):.2f} M")
+
+    # Learning rate schedule with cosine decay
+    schedule = optax.warmup_cosine_decay_schedule(
+        min_lr, max_lr, warmup_steps=warmup_steps, decay_steps=(max_steps - warmup_steps)
     )
+
+    # Apply mask to decay selected parameters only
+    param_mask = jtu.tree_map(set_mask, eqx.filter(model, eqx.is_array), is_leaf=is_layer)
+    optim = optax.chain(
+        optax.adamw(schedule, mask=param_mask, b1=b1, b2=b2, weight_decay=weight_decay),
+        optax.clip_by_global_norm(grad_clip_norm),
+    )
+    optim = optax.MultiSteps(optim, every_k_schedule=grad_accum_steps)
+    optim_state = optim.init(eqx.filter(model, eqx.is_array))
+
+
+    print("Training...\n")
+    for step in range(max_steps):
+        t0 = time.time()
+        for micro_step in range(grad_accum_steps):
+            batch_inputs, batch_targets = train_loader.next_batch()
+            loss, model, optim_state = train_step(
+                model,
+                optim,
+                optim_state,
+                batch_inputs,
+                batch_targets,
+            )
+            if micro_step % 20 == 0:
+                print(f"batchloss: {loss:.5f}")
+
+        t1 = time.time()
+        dt = t1 - t0  # time difference in seconds
+        tokens_processed = train_loader.B * train_loader.T * grad_accum_steps
+        tokens_per_sec = tokens_processed / dt
+        print(
+            f"step {step:4d} | loss: {loss:.6f} | dt: {dt*1000:.2f}ms | tok/sec: {tokens_per_sec:.2f}"
+        )
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("data_file_path", type=str, required=True)
+    args = parser.parse_args()
+    main(args.data_file_path)
