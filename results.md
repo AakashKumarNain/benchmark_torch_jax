@@ -1,5 +1,5 @@
 # 1. GPT-2
-Both these runs are done on a single A100 80G GPU
+Both these runs are done on a single A100 40G GPU
 
 
 Initial results with JAX and Equinox
